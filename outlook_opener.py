@@ -75,6 +75,7 @@ def fill_password(page, password):
 
 def select_random_option_from_combobox(page, combobox_selector):
     try:
+        page.locator(combobox_selector).scroll_into_view_if_needed()
         page.click(combobox_selector, timeout=5000)
     except PlaywrightTimeoutError:
         print(f"[warn] Could not click {combobox_selector}")
@@ -88,23 +89,72 @@ def select_random_option_from_combobox(page, combobox_selector):
         return False
 
     visible_indices = [i for i in range(total) if options.nth(i).is_visible()]
-    if not visible_indices:
-        options.nth(0).click()
-        return True
+    pick = random.choice(visible_indices or [0])
+    text = options.nth(pick).inner_text()
+    print(f"📅 Selected: {text}")
+    options.nth(pick).click()
+    return True
 
-    pick = random.choice(visible_indices)
+
+def select_month(page):
+    """Special handling for BirthMonthDropdown since it's sometimes flaky."""
+    try:
+        expand_icon = page.locator("#BirthMonthDropdown svg")
+        expand_icon.scroll_into_view_if_needed(timeout=5000)
+        expand_icon.click(force=True)
+    except PlaywrightTimeoutError:
+        print("[warn] Could not click month expand icon")
+        return False
+
+    try:
+        page.wait_for_selector('[role="option"]', timeout=5000)
+    except PlaywrightTimeoutError:
+        print("[warn] Month options did not appear, retrying click...")
+        expand_icon.click(force=True)
+        page.wait_for_selector('[role="option"]', timeout=5000)
+
+    options = page.locator('[role="option"]')
+    total = options.count()
+    if total == 0:
+        print("[error] No months available to select.")
+        return False
+
+    visible_indices = [i for i in range(total) if options.nth(i).is_visible()]
+    pick = random.choice(visible_indices or [0])
+    selected_text = options.nth(pick).inner_text()
+    print(f"📅 Selected month: {selected_text}")
     options.nth(pick).click()
     return True
 
 
 def fill_birthdate(page):
-    select_random_option_from_combobox(page, "#BirthMonthDropdown")
+    print("Selecting birth month...")
+    success = select_month(page)
+    if not success:
+        print("[warn] Month selection failed, retrying...")
+        select_month(page)
+
     time.sleep(0.3)
+    print("Selecting birth day...")
     select_random_option_from_combobox(page, "#BirthDayDropdown")
+
     time.sleep(0.3)
     year = random.randint(1990, 2002)
+    print(f"Typing year: {year}")
     page.fill('input[name="BirthYear"]', str(year))
     page.get_by_test_id("primaryButton").click()
+
+
+def fill_first_last_name(page, first_name, last_name):
+    """Fill first and last name fields on the next screen and press next."""
+    try:
+        page.wait_for_selector("#firstNameInput", timeout=15000)
+        page.fill("#firstNameInput", first_name)
+        page.fill("#lastNameInput", last_name)
+        print(f"✅ Filled first name: {first_name}, last name: {last_name}")
+        page.get_by_test_id("primaryButton").click()
+    except PlaywrightTimeoutError:
+        print("[error] Could not find first/last name inputs.")
 
 
 def main():
@@ -138,14 +188,18 @@ def main():
             print("✅ Email accepted.")
             break
 
-        first_name = name.split()[0].lower()
-        password = f"{first_name}@12345"
+        first_name, last_name = name.split()[0], name.split()[-1]
+        password = f"{first_name.lower()}@12345"
         print(f"Generated Password: {password}")
         fill_password(page, password)
 
         time.sleep(2)
         fill_birthdate(page)
-        print("✅ Birthdate submitted. Browser will stay open.")
+
+        time.sleep(2)
+        fill_first_last_name(page, first_name, last_name)
+
+        print("✅ First & last name submitted. Browser will stay open.")
         input("Press Enter to close...")
         browser.close()
 
