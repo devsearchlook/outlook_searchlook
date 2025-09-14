@@ -1,6 +1,7 @@
 """
 Automated Outlook Signup with Playwright + Groq LLM
 Loads GROQ_API_KEY from .env file using python-dotenv.
+Attempts to bypass automation detection to make "Press and Hold" captcha appear.
 """
 
 import os
@@ -20,6 +21,16 @@ if not GROQ_API_KEY:
 SIGNUP_URL = "https://go.microsoft.com/fwlink/p/?LinkID=2125440&clcid=0x409&culture=en-us&country=us"
 
 
+# ------------------ Utility: Human-like Typing ------------------
+def human_type(page, selector, text):
+    """Type into a field character by character with random delay."""
+    page.click(selector)
+    for char in text:
+        page.keyboard.insert_text(char)
+        time.sleep(random.uniform(0.05, 0.2))  # slight variation
+
+
+# ------------------ Email Generation ------------------
 def generate_mexican_email():
     """Generate realistic Mexican name + email handle using Groq LLM."""
     prompt = (
@@ -61,15 +72,16 @@ def generate_mexican_email():
     return name, handle
 
 
+# ------------------ Form Fillers ------------------
 def try_fill_email(page, handle):
     page.wait_for_selector('input[name="New email"]', timeout=15000)
-    page.fill('input[name="New email"]', handle)
+    human_type(page, 'input[name="New email"]', handle)
     page.get_by_test_id("primaryButton").click()
 
 
 def fill_password(page, password):
     page.wait_for_selector('input[type="password"]', timeout=15000)
-    page.fill('input[type="password"]', password)
+    human_type(page, 'input[type="password"]', password)
     page.get_by_test_id("primaryButton").click()
 
 
@@ -141,7 +153,7 @@ def fill_birthdate(page):
     time.sleep(0.3)
     year = random.randint(1990, 2002)
     print(f"Typing year: {year}")
-    page.fill('input[name="BirthYear"]', str(year))
+    human_type(page, 'input[name="BirthYear"]', str(year))
     page.get_by_test_id("primaryButton").click()
 
 
@@ -149,20 +161,36 @@ def fill_first_last_name(page, first_name, last_name):
     """Fill first and last name fields on the next screen and press next."""
     try:
         page.wait_for_selector("#firstNameInput", timeout=15000)
-        page.fill("#firstNameInput", first_name)
-        page.fill("#lastNameInput", last_name)
+        human_type(page, "#firstNameInput", first_name)
+        human_type(page, "#lastNameInput", last_name)
         print(f"✅ Filled first name: {first_name}, last name: {last_name}")
         page.get_by_test_id("primaryButton").click()
     except PlaywrightTimeoutError:
         print("[error] Could not find first/last name inputs.")
 
 
+# ------------------ Main ------------------
 def main():
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=150)
-        context = browser.new_context()
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=120,
+            args=["--disable-blink-features=AutomationControlled"]
+        )
+        context = browser.new_context(viewport={"width": 1366, "height": 900})
         page = context.new_page()
+
+        # Patch navigator.webdriver to avoid detection
+        page.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+        )
+
         page.goto(SIGNUP_URL)
+
+        # Simulate some natural mouse movement before interacting
+        for _ in range(3):
+            page.mouse.move(random.randint(0, 500), random.randint(0, 500))
+            time.sleep(0.4)
 
         while True:
             name, handle = generate_mexican_email()
@@ -199,7 +227,14 @@ def main():
         time.sleep(2)
         fill_first_last_name(page, first_name, last_name)
 
-        print("✅ First & last name submitted. Browser will stay open.")
+        # Wait to see if captcha appears
+        try:
+            page.wait_for_selector("p:has-text('Press and hold')", timeout=15000)
+            print("✅ Captcha loaded! Solve manually.")
+            page.pause()
+        except:
+            print("⚠️ Captcha not detected. Microsoft may still be blocking automation.")
+
         input("Press Enter to close...")
         browser.close()
 
